@@ -20,6 +20,8 @@ import torchvision
 import torchvision.transforms as transforms
 import torchvision.models as models
 
+from torchmetrics import FBetaScore, AUROC
+
 from lightning import (
     Trainer,
     LightningModule,
@@ -131,6 +133,12 @@ class SignModel(LightningModule):
         self.n_classes = cfg.n_classes
         self.num_correct = 0
         self.num_total = 0
+        
+        self.fbeta_train = FBetaScore(task='multiclass', num_classes=self.n_classes, beta=1.0, average='micro')
+        self.auroc_train = AUROC(task='multiclass', num_classes=self.n_classes, average='macro')
+        
+        self.fbeta_val = FBetaScore(task='multiclass', num_classes=self.n_classes, beta=1.0, average='micro')
+        self.auroc_val = AUROC(task='multiclass', num_classes=self.n_classes, average='macro')
 
         self.block1 = nn.Sequential(
             # (bacth, 1, 28, 28)
@@ -188,6 +196,14 @@ class SignModel(LightningModule):
         pred_labels = torch.argmax(pred_clas, dim=1)
         self.num_correct += float((pred_labels == labels).sum())
         self.num_total += labels.shape[0]
+        
+        if step == 'train':
+            self.fbeta_train.update(pred_clas, labels)
+            self.auroc_train.update(pred_clas, labels)
+        elif step == 'valid':
+            self.fbeta_val.update(pred_clas, labels)
+            self.auroc_val.update(pred_clas, labels)
+        
         loss_dict = {
             f"{step}/loss": loss,
         }
@@ -220,6 +236,12 @@ class SignModel(LightningModule):
         
     def on_train_epoch_start(self):
         self._reset_num()
+        
+    def on_train_epoch_end(self):
+        self.log('train/fbeta', self.fbeta_train.compute(), prog_bar=True)
+        self.log('train/auroc', self.auroc_train.compute(), prog_bar=True)
+        self.fbeta_train.reset()
+        self.auroc_train.reset()
 
     def on_test_epoch_start(self):
         self._reset_num()
@@ -232,6 +254,10 @@ class SignModel(LightningModule):
         
     def on_validation_epoch_end(self):
         self._accuracy('valid')
+        self.log('valid/fbeta', self.fbeta_val.compute(), prog_bar=True)
+        self.log('valid/auroc', self.auroc_val.compute(), prog_bar=True)
+        self.fbeta_val.reset()
+        self.auroc_val.reset() 
 
 
 def main(fast_dev_run: bool, epochs: int):
