@@ -27,6 +27,12 @@ from lightning import (
     LightningModule,
     LightningDataModule,    
 )
+from lightning.pytorch.callbacks import (
+    RichProgressBar,
+    EarlyStopping,
+    ModelCheckpoint,
+)
+from lightning.pytorch import seed_everything
 
 from dataclasses import dataclass
 
@@ -136,9 +142,13 @@ class SignModel(LightningModule):
         
         self.fbeta_train = FBetaScore(task='multiclass', num_classes=self.n_classes, beta=1.0, average='micro')
         self.auroc_train = AUROC(task='multiclass', num_classes=self.n_classes, average='macro')
+        self.fbeta_train.compute_on_step = False # вычисление метрик только в конце эпохи
+        self.auroc_train.compute_on_step = False
         
         self.fbeta_val = FBetaScore(task='multiclass', num_classes=self.n_classes, beta=1.0, average='micro')
         self.auroc_val = AUROC(task='multiclass', num_classes=self.n_classes, average='macro')
+        self.fbeta_val.compute_on_step = False
+        self.auroc_val.compute_on_step = False
 
         self.block1 = nn.Sequential(
             # (bacth, 1, 28, 28)
@@ -262,6 +272,7 @@ class SignModel(LightningModule):
 
 def main(fast_dev_run: bool, epochs: int):
     cfg = CFG()
+    seed_everything(cfg.seed, workers=True)
     cfg.epochs = epochs
     ds = SignDM(cfg)
     model = SignModel(cfg)
@@ -274,7 +285,11 @@ def main(fast_dev_run: bool, epochs: int):
         trainer = Trainer(
             accelerator=cfg.device,
             max_epochs=cfg.epochs,
-            log_every_n_steps=cfg.log_every_n_steps,)
+            log_every_n_steps=cfg.log_every_n_steps,
+            callbacks=[RichProgressBar(leave=True), # Не перезаписывать строку в терминале
+                       EarlyStopping(monitor='valid/auroc', mode='max', patience=3),
+                       ModelCheckpoint(monitor='valid/auroc', mode='max', save_top_k=1, dirpath=cfg.path_to_save, filename='best_model', enable_version_counter=True)],
+            )
         trainer.fit(model, datamodule=ds)
         trainer.test(model, datamodule=ds)
         print("Обучение завершено успешно")
