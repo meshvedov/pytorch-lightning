@@ -6,3 +6,5 @@ wget -P ./data https://github.com/a-milenkin/ml_instruments/raw/refs/heads/main/
 
 unzip ./data/sign_mnist_train.csv.zip -d ./data/
 unzip ./data/sign_mnist_test.csv.zip -d ./data/
+
+rm ./data/{sign_mnist_train.csv.zip,sign_mnist_test.csv.zip}
