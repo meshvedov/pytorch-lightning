@@ -20,7 +20,7 @@ import torchvision
 import torchvision.transforms as transforms
 import torchvision.models as models
 
-from torchmetrics import FBetaScore, AUROC
+from torchmetrics import FBetaScore, AUROC, Metric
 
 from lightning import (
     Trainer,
@@ -55,6 +55,37 @@ class CFG:
     dilation: int = 1
     n_classes: int = 25
     log_every_n_steps: int = 1
+    
+class FalseDiscoveryRate(Metric):
+    def __init__(self, num_classes, average='macro'):
+        super().__init__()
+        self.num_classes = num_classes
+        self.average = average
+        
+        # Добавляем состояния для подсчета TP и FP
+        self.add_state('fp', default=torch.zeros(num_classes))
+        self.add_state('tp', default=torch.zeros(num_classes))
+        
+    def update(self, preds, target):
+        preds = torch.argmax(preds, dim=1)
+        
+        # Подсчет TP и FP для каждого класса
+        for c in range(self.num_classes):
+            tp = ((preds == c) & (target == c)).sum().item()
+            fp = ((preds == c) & (target != c)).sum().item()
+            self.tp[c] += tp
+            self.fp[c] += fp
+            
+    def compute(self):
+        # Вычисление FDR для каждого класса
+        fdr = self.fp / (self.tp + self.fp + 1e-6)  # Добавляем малое значение для избежания деления на ноль
+        
+        if self.average == 'macro':
+            return fdr.mean()
+        elif self.average == 'micro':
+            return fdr.sum() / self.num_classes
+        else:
+            raise ValueError("Average must be either 'macro' or 'micro'.")
 
 class SignLanguageDataset(data.Dataset):
     def __init__(self, df, transform=None):
@@ -149,6 +180,10 @@ class SignModel(LightningModule):
         self.auroc_val = AUROC(task='multiclass', num_classes=self.n_classes, average='macro')
         self.fbeta_val.compute_on_step = False
         self.auroc_val.compute_on_step = False
+        
+        # FDR метрика
+        self.fdr_train = FalseDiscoveryRate(num_classes=self.n_classes, average='macro')
+        self.fdr_val = FalseDiscoveryRate(num_classes=self.n_classes, average='macro')
 
         self.block1 = nn.Sequential(
             # (bacth, 1, 28, 28)
@@ -210,9 +245,11 @@ class SignModel(LightningModule):
         if step == 'train':
             self.fbeta_train.update(pred_clas, labels)
             self.auroc_train.update(pred_clas, labels)
+            self.fdr_train.update(pred_clas, labels)
         elif step == 'valid':
             self.fbeta_val.update(pred_clas, labels)
             self.auroc_val.update(pred_clas, labels)
+            self.fdr_val.update(pred_clas, labels)
         
         loss_dict = {
             f"{step}/loss": loss,
@@ -250,8 +287,10 @@ class SignModel(LightningModule):
     def on_train_epoch_end(self):
         self.log('train/fbeta', self.fbeta_train.compute(), prog_bar=True)
         self.log('train/auroc', self.auroc_train.compute(), prog_bar=True)
+        self.log('train/fdr', self.fdr_train.compute(), prog_bar=True)
         self.fbeta_train.reset()
         self.auroc_train.reset()
+        self.fdr_train.reset()
 
     def on_test_epoch_start(self):
         self._reset_num()
@@ -266,8 +305,10 @@ class SignModel(LightningModule):
         self._accuracy('valid')
         self.log('valid/fbeta', self.fbeta_val.compute(), prog_bar=True)
         self.log('valid/auroc', self.auroc_val.compute(), prog_bar=True)
+        self.log('valid/fdr', self.fdr_val.compute(), prog_bar=True)    
         self.fbeta_val.reset()
-        self.auroc_val.reset() 
+        self.auroc_val.reset()
+        self.fdr_val.reset()
 
 
 def main(fast_dev_run: bool, epochs: int):
