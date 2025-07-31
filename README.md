@@ -11,7 +11,8 @@
 - 🏎️ Оптимизация для GPU с поддержкой Tensor Cores
 - 📊 Интеграция с ClealML для трекинга экспериментов
 - 🧩 Готовность к масштабированию (multi-GPU/TPU)
-- 🔍 Подробное логирование метрик
+- 🔍 Логирование метрик: F Beta Score, AUROC, False Discovery Rate
+- 🚀 Использование callbacks: EarlyStopping, ModelCheckpoint
 
 ## 📦 Установка
 
